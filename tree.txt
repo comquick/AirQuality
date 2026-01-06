@@ -1,0 +1,75 @@
+開始
+└─ 1) GET：抓「前一小時」資料 (records = fetch_previous_hour_records())
+   ├─ 1.1 records 為空 []
+   │  └─ 結果：ERROR
+   │     └─ 訊息：GET 沒有抓到任何資料 → 判定空品站未順利上傳該小時資料
+   │
+   ├─ 1.2 records 非空（len >= 1）
+   │  └─ 2) 選定要上傳的一筆 (record = records[0])
+   │     └─ 3) Validate payload（允許 null、不允許空白字串；必備 keys 必須存在）
+   │        ├─ 3.1 缺少必備 keys（Missing keys）
+   │        │  └─ 結果：ERROR
+   │        │     └─ 訊息：Missing keys: detectedAtUtc, pm_25, ...
+   │        │
+   │        ├─ 3.2 有空白字串欄位（Blank string，例如 "" 或 "   "）
+   │        │  └─ 結果：ERROR
+   │        │     └─ 訊息：Blank string not allowed in fields: detectedAtUtc, ...
+   │        │
+   │        └─ 3.3 Validate OK（payload 準備完成）
+   │           └─ 4) 建立 Session + 登入 (login)
+   │              ├─ 4.1 登入成功（拿到 cookie / session 有效）
+   │              │  └─ 5) LIST：查詢資料庫「最新前 N 筆」(POST /api/AirQuality/list)
+   │              │     ├─ 5.1 LIST 回 401/403（未授權）
+   │              │     │  └─ 5.1.1 自動重登一次
+   │              │     │     ├─ 5.1.1.a 重登成功 → 重新 LIST
+   │              │     │     │  └─ 回到 5.2 / 5.3 / 5.4 分支
+   │              │     │     └─ 5.1.1.b 重登失敗
+   │              │     │        └─ 結果：ERROR
+   │              │     │           └─ 訊息：Login failed: 401/403/...（含 body 預覽）
+   │              │     │
+   │              │     ├─ 5.2 LIST 成功但回傳格式異常（非 JSON、或沒有 rows）
+   │              │     │  └─ 結果：ERROR
+   │              │     │     └─ 訊息：List response schema unexpected / JSON decode error
+   │              │     │
+   │              │     ├─ 5.3 LIST 成功，rows 取得成功
+   │              │     │  └─ 6) 去重判斷（normalize detectedAtUtc 後比對）
+   │              │     │     ├─ 6.1 payload.detectedAtUtc 在 rows 中已存在
+   │              │     │     │  └─ 結果：SKIP（視為成功）
+   │              │     │     │     └─ 訊息：Duplicate detectedAtUtc → skip upload
+   │              │     │     │
+   │              │     │     └─ 6.2 payload.detectedAtUtc 不存在
+   │              │     │        └─ 7) UPLOAD：POST /api/AirQuality 上傳
+   │              │     │           ├─ 7.1 上傳回 401/403
+   │              │     │           │  └─ 7.1.1 自動重登一次 + 再次「先 LIST 再判斷」
+   │              │     │           │     ├─ 7.1.1.a 重登成功 → 重新 LIST（避免重跑/競態造成重複）
+   │              │     │           │     │  ├─ 若此時已存在 detectedAtUtc
+   │              │     │           │     │  │  └─ 結果：SKIP（視為成功）
+   │              │     │           │     │  │     └─ 訊息：Duplicate after relogin → skip upload
+   │              │     │           │     │  └─ 若仍不存在 → 再次 UPLOAD
+   │              │     │           │     │     ├─ 第二次 UPLOAD 成功（2xx）
+   │              │     │           │     │     │  └─ 結果：SUCCESS
+   │              │     │           │     │     └─ 第二次仍失敗（非 2xx）
+   │              │     │           │     │        └─ 結果：ERROR
+   │              │     │           │     │           └─ 訊息：POST failed: status + reason + body 預覽
+   │              │     │           │     └─ 7.1.1.b 重登失敗
+   │              │     │           │        └─ 結果：ERROR
+   │              │     │           │           └─ 訊息：Login failed...
+   │              │     │           │
+   │              │     │           ├─ 7.2 上傳回非 2xx（例如 400/500）
+   │              │     │           │  └─ 結果：ERROR
+   │              │     │           │     └─ 訊息：POST failed: status + reason + body 預覽
+   │              │     │           │
+   │              │     │           └─ 7.3 上傳成功（2xx）
+   │              │     │              └─ 結果：SUCCESS
+   │              │     │                 └─ 訊息：Upload success（含回應 JSON 或空 body）
+   │              │     │
+   │              │     └─ 5.4 LIST 呼叫過程發生網路/timeout/連線錯誤
+   │              │        └─ 結果：ERROR
+   │              │           └─ 訊息：Request timeout / Connection error
+   │              │
+   │              └─ 4.2 登入失敗（非 2xx 或無 cookie）
+   │                 └─ 結果：ERROR
+   │                    └─ 訊息：Login failed / auth cookie not found
+   │
+   └─（任何未捕捉例外）
+      └─ 結果：Fatal error（stderr）+ exit code 1

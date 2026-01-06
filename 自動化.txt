@@ -1,0 +1,16 @@
+cd /mnt/c/Users/candy/Desktop/大三下/測站
+python3 -m venv .venv_wsl
+source .venv_wsl/bin/activate
+pip install -U pip
+pip install requests
+METEO_ACCOUNT="yolko" METEO_PASSWORD="yolko123" python post.py
+echo $? #0表示成功
+mkdir -p logs
+crontab -e
+#去裡面
+*/3 * * * * cd /mnt/c/Users/candy/Desktop/大三下/測站 && METEO_ACCOUNT="yolko" METEO_PASSWORD="yolko123" /mnt/c/Users/candy/Desktop/大三下/測站/.venv_wsl/bin/python /mnt/c/Users/candy/Desktop/大三下/測站/post.py >> /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron.log 2>&1
+#出來 他就開始執行了
+tail -n 50 /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron.log
+tail -f /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron.log
+crontab -e
+#進去#掉就可以結束執行
