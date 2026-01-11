@@ -3,8 +3,7 @@ import sys
 import json
 import requests
 from datetime import datetime, timezone
-
-from get import fetch_previous_hour_data
+from get2 import fetch_previous_hour_data
 
 BASE_URL = "https://meteo.local2.tempestdigi.com"
 LOGIN_URL = f"{BASE_URL}/api/Account/login"
@@ -56,6 +55,8 @@ def _validate_allow_null_no_blank(record: dict) -> dict:
 def _get_credentials() -> tuple[str, str]:
     account = os.getenv("METEO_ACCOUNT", "").strip()
     password = os.getenv("METEO_PASSWORD", "").strip()
+    #account = "yolko"
+    #password = "yolko123"
     if not account or not password:
         raise ValueError("Missing account or password")
     return account, password
@@ -136,6 +137,45 @@ def _build_existing_set_from_rows(rows: list[dict]) -> set[str]:
             continue
     return existing
 
+#成功上傳後抓最新的資料
+def fetch_latest_rows(session: requests.Session, page_size: int = 5) -> list[dict]:
+    body = {
+        "page": 0,
+        "pageSize": page_size,
+        "sortModel": {"items": [{"field": "DetectedAtUtc", "sort": "desc"}]},
+        "filterModel": {"items": []},
+    }
+    resp = session.post(LIST_URL, json=body, timeout=20)
+
+    if not (200 <= resp.status_code < 300):
+        raise RuntimeError(f"LIST(latest) failed: {resp.status_code} | body: {resp.text[:300]}")
+
+    try:
+        data = resp.json()
+    except Exception:
+        raise RuntimeError(f"LIST(latest) response is not valid JSON | body: {resp.text[:300]}")
+
+    rows = data.get("rows", [])
+    if not isinstance(rows, list):
+        raise RuntimeError("LIST(latest) response schema unexpected (rows is not a list)")
+    return rows
+
+
+def find_uploaded_row_by_detected_at(rows: list[dict], target_detected_at_utc: str) -> dict | None:
+    """
+    target_detected_at_utc: normalized 'YYYY-MM-DDTHH:MM:SSZ'
+    """
+    for r in rows:
+        s = r.get("detectedAtUtc")
+        if not s:
+            continue
+        try:
+            if _normalize_detected_at_utc(s) == target_detected_at_utc:
+                return r
+        except Exception:
+            continue
+    return None
+
 #指上傳一次(不能一次上傳多個)
 def upload_once(session: requests.Session, payload: dict) -> requests.Response:
     return session.post(UPLOAD_URL, json=payload, timeout=20)
@@ -189,13 +229,16 @@ def upload_with_relogin_and_dedup(payload: dict) -> dict:
         if not (200 <= resp.status_code < 300):
             raise RuntimeError(f"POST failed: {resp.status_code} {resp.reason} | body: {resp.text[:300]}")
 
-        #成功結果
-        if resp.content:
-            try:
-                return {"status": "SUCCESS", "response": resp.json()}
-            except Exception:
-                return {"status": "SUCCESS", "responseText": resp.text}
-        return {"status": "SUCCESS", "httpStatus": resp.status_code}
+        # 成功：再用 LIST 抓最新幾筆，找出剛上傳那筆（含 id）
+        latest_rows = fetch_latest_rows(session, page_size=10)
+        uploaded_row = find_uploaded_row_by_detected_at(latest_rows, target_norm)
+
+        return {
+            "status": "SUCCESS",
+            "normalizedDetectedAtUtc": target_norm,
+            "payload": payload,          # 你送出去的資料
+            "latestRow": uploaded_row,   # LIST 找到的那筆（通常含 id）
+        }
 
 
 def main()-> int:
@@ -223,8 +266,28 @@ def main()-> int:
             return 0
         #成功上傳資料
         if status == "SUCCESS":
-            log_ok("Upload success")
-            # log_info(f"Response={json.dumps(result, ensure_ascii=False)}") 
+            #log_ok("Upload success")
+            # log_info(f"Response={json.dumps(result, ensure_ascii=False)}")
+        
+            uploaded_at_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            latest_row = result.get("latestRow") or {}
+            row_id = latest_row.get("id") or latest_row.get("Id")  # 有些後端可能用 Id
+
+            log_ok(f"Upload success | uploadedAtUtc={uploaded_at_utc} | id={row_id}")
+
+            #顯示上傳的那筆資料
+            if latest_row:
+                log_info("Uploaded row (from LIST latest):")
+                print(json.dumps(latest_row, ensure_ascii=False, indent=2))
+            else:
+                log_info("Uploaded row not found in latest list; showing payload instead:")
+                print(json.dumps(result.get("payload"), ensure_ascii=False, indent=2))
+
+            if result.get("postResponse") is not None:
+                log_info("POST response JSON:")
+                print(json.dumps(result["postResponse"], ensure_ascii=False, indent=2))
+ 
             return 0
         #其他錯誤
         log_err(f"Unexpected result status: {json.dumps(result, ensure_ascii=False)}")

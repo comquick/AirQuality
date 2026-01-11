@@ -14,3 +14,32 @@ tail -n 50 /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron.log
 tail -f /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron.log
 crontab -e
 #進去#掉就可以結束執行
+
+=====================================================
+1/12 新的部屬
+cd /mnt/c/Users/candy/Desktop/大三下/測站
+python3 -m venv .venv_wsl
+source .venv_wsl/bin/activate
+pip install -U pip
+pip install requests
+which python
+python -c "import sys; print(sys.executable)"
+#測試
+METEO_ACCOUNT="yolko" METEO_PASSWORD="yolko123" python post.py
+echo $?  # 0 表示成功
+METEO_ACCOUNT="yolko" METEO_PASSWORD="yolko123" python audit.py --hours 24
+echo $?  # 0=完整；1=有缺洞（這是正常可能）；2=參數錯；其他=錯誤
+METEO_ACCOUNT="yolko" METEO_PASSWORD="yolko123" python audit.py --hours 24 --auto-backfill --backfill-dry-run
+echo $?
+METEO_ACCOUNT="yolko" METEO_PASSWORD="yolko123" python audit.py --hours 24 --auto-backfill
+echo $?
+#開始
+mkdir -p logs
+crontab -e
+# AirQuality audit + auto-backfill (last 24h), run hourly at minute 10
+10 * * * * cd /mnt/c/Users/candy/Desktop/大三下/測站 && METEO_ACCOUNT="yolko" METEO_PASSWORD="yolko123" /mnt/c/Users/candy/Desktop/大三下/測站/.venv_wsl/bin/python /mnt/c/Users/candy/Desktop/大三下/測站/audit.py --hours 24 --auto-backfill >> /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron_audit.log 2>&1
+tail -n 50 /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron_audit.log
+tail -f /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron_audit.log
+#想停止
+crontab -e
+#10 * * * * cd /mnt/c/Users/candy/Desktop/大三下/測站 && METEO_ACCOUNT="yolko" METEO_PASSWORD="yolko123" /mnt/c/Users/candy/Desktop/大三下/測站/.venv_wsl/bin/python /mnt/c/Users/candy/Desktop/大三下/測站/audit.py --hours 24 --auto-backfill >> /mnt/c/Users/candy/Desktop/大三下/測站/logs/cron_audit.log 2>&1
